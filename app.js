@@ -187,7 +187,7 @@ async function getCheckinInfoSJ(host) {
         let baseMessage = (typeof host.message === 'string' && (host.message.endsWith("!") || host.message.endsWith("。")) ? host.message : (host.message || "") + "。");
         host.message = `${baseMessage} ${userInfo}${checkinDetails}`;
 
-        console.log(`[${host.name}] 获取签到信息成功: ${userInfo}${checkinDetails}`);
+        
     } catch (error) {
         const errorMsg = `获取签到信息出错: ${error.message}`;
         host.message += ` (${errorMsg})`; 
