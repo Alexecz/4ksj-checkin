@@ -111,7 +111,10 @@ async function getFormHashSJ(host) {
         }
         
         host.userName = userNameText; // 存储用户名
-        // console.log(`[${host.name}] 获取用户信息成功！用户名: ${host.userName}`); // 移除控制台打印用户名
+        if (host.userName && typeof process.env.GITHUB_ACTIONS !== 'undefined') { // 仅在 GitHub Actions 环境中输出 add-mask
+            console.log(`::add-mask::${host.userName}`); // 指示 GitHub Actions 屏蔽此用户名
+        }
+        // console.log(`[${host.name}] 获取用户信息成功！用户名: ${host.userName}`); // 已移除控制台打印用户名
         
         const formHash = $('#scbar_form input[name="formhash"]').val() || $('#scbar_form input:nth-child(2)').val(); 
         
@@ -191,9 +194,6 @@ async function getCheckinInfoSJ(host) {
         }
 
         let detailStrings = [];
-        // Use the text directly from the original selectors if they are not empty
-        // These texts might already contain labels like "本月打卡: 10" or just "10"
-        // The original script simply concatenated them.
         if (rawMonth) detailStrings.push(rawMonth);
         if (rawCtu) detailStrings.push(rawCtu);
         if (rawTotal) detailStrings.push(rawTotal);
@@ -328,19 +328,26 @@ async function sendTelegramMsg(status, info) {
 async function main() {
     console.log("脚本开始运行:", new Date().toLocaleString());
     let overallStatusSummary = [];
-    let overallMessageDetails = [];
+    let overallMessageDetails = []; // For push notifications, includes username
+    // let consoleMessageDetails = []; // We will construct the console message directly
+
     let atLeastOneCheckinAttempted = false;
+    let sjHostInfo = null; 
 
     if (cookieSJ) {
         atLeastOneCheckinAttempted = true;
-        let sj = new HostInfo("4K视界", SJUrl, SJHeaders);
-        await getFormHashSJ(sj); 
-        overallStatusSummary.push(`${sj.name}: ${sj.status ? '成功' : '失败'}`);
-        overallMessageDetails.push(`**${sj.name}**: ${sj.message}`); 
+        sjHostInfo = new HostInfo("4K视界", SJUrl, SJHeaders);
+        await getFormHashSJ(sjHostInfo); 
+        overallStatusSummary.push(`${sjHostInfo.name}: ${sjHostInfo.status ? '成功' : '失败'}`);
+        overallMessageDetails.push(`**${sjHostInfo.name}**: ${sjHostInfo.message}`); 
+
     } else {
         console.log("[4K视界] 未配置 SJCOOKIE，跳过签到。");
-        overallStatusSummary.push("4K视界: 未配置Cookie"); 
-        overallMessageDetails.push("**4K视界**: 未配置Cookie，跳过。");
+        const noCookieMsg = "4K视界: 未配置Cookie";
+        const noCookieDetail = "**4K视界**: 未配置Cookie，跳过。";
+        overallStatusSummary.push(noCookieMsg); 
+        overallMessageDetails.push(noCookieDetail);
+        // consoleMessageDetails.push(noCookieMsg); 
         
         if (!atLeastOneCheckinAttempted) { 
              const noServiceMsg = "4K视界 Cookie (SJCOOKIE) 未配置，无法执行签到。";
@@ -351,14 +358,24 @@ async function main() {
     }
     
     const finalStatus = "签到结果: " + overallStatusSummary.join('; ');
-    const finalMessage = overallMessageDetails.join('\n\n');
+    const finalMessageForPush = overallMessageDetails.join('\n\n'); 
+    
+    // Prepare the final message for console output
+    // It will be based on overallMessageDetails but without the username if ::add-mask:: is used.
+    // If ::add-mask:: is effective, the username in sjHostInfo.message (and thus in finalMessageForPush)
+    // will be masked as '***' in the GitHub Actions log.
+    // We still remove Markdown for console readability.
+    let finalMessageForConsoleOutput = finalMessageForPush;
+
 
     console.log("\n--- 最终结果 ---");
     console.log(finalStatus);
-    console.log(finalMessage.replace(/\*\*/g, '').replace(/\*/g, '')); 
+    // The ::add-mask:: command should handle masking the username if it appears here.
+    // We just clean up markdown for console readability.
+    console.log(finalMessageForConsoleOutput.replace(/\*\*/g, '').replace(/\*/g, '')); 
     console.log("------------------");
 
-    pushNotice(finalStatus, finalMessage);
+    pushNotice(finalStatus, finalMessageForPush); 
     console.log("脚本运行结束:", new Date().toLocaleString());
 }
 
