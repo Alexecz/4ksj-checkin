@@ -1,4 +1,4 @@
-name: hao4k-checkin-nodejs
+name: 4ksj-checkin
 
 on:
   # workflow_dispatch 事件允许您手动触发工作流程
