@@ -123,7 +123,7 @@ async function getFormHashSJ(host) {
         }
 
         host.formHash = formHash;
-        console.log(`[${host.name}] 获取 formhash 成功: ${formHash}`);
+        // console.log(`[${host.name}] 获取 formhash 成功: ${formHash}`);
         await checkinSJ(host);
 
     } catch (error) {
@@ -135,7 +135,7 @@ async function getFormHashSJ(host) {
 
 async function checkinSJ(host) {
     const checkInUrl = host.url + "qiandao.php?sign=" + host.formHash; 
-    console.log(`[${host.name}] 开始签到，URL: ${checkInUrl}`);
+    // console.log(`[${host.name}] 开始签到，URL: ${checkInUrl}`); 
     try {
         const response = await axios.get(checkInUrl, {
             headers: host.header,
@@ -174,23 +174,54 @@ async function getCheckinInfoSJ(host) {
         const gb = iconv.decode(response.data, "GBK"); 
         const $ = cheerio.load(gb);
         
-        const month = $('#wp .ct2 .sd div:contains("我的签到") + div .xl1 li:contains("本月打卡")').text().replace('本月打卡', '').trim();
-        const ctu = $('#wp .ct2 .sd div:contains("我的签到") + div .xl1 li:contains("连续打卡")').text().replace('连续打卡', '').trim();
-        const total = $('#wp .ct2 .sd div:contains("我的签到") + div .xl1 li:contains("累计打卡")').text().replace('累计打卡', '').trim();
-        const totalPrice = $('#wp .ct2 .sd div:contains("我的签到") + div .xl1 li:contains("累计奖励")').text().replace('累计奖励', '').trim();
-        const price = $('#wp .ct2 .sd div:contains("我的签到") + div .xl1 li:contains("最近奖励")').text().replace('最近奖励', '').trim();
+        const rawMonth = $('#wp > .ct2 > .sd div:nth-child(2) .xl1 li:nth-child(2):eq(0)').text().trim();
+        const rawCtu = $('#wp > .ct2 > .sd div:nth-child(2) .xl1 li:nth-child(3):eq(0)').text().trim();
+        const rawTotal = $('#wp > .ct2 > .sd div:nth-child(2) .xl1 li:nth-child(4):eq(0)').text().trim();
+        const rawTotalPrice = $('#wp > .ct2 > .sd div:nth-child(2) .xl1 li:nth-child(5):eq(0)').text().trim();
+        const rawPrice = $('#wp > .ct2 > .sd div:nth-child(2) .xl1 li:nth-child(6):eq(0)').text().trim();
       
-        let userInfo = host.userName ? `用户名: ${host.userName}; ` : ''; // 用户名信息
-        let checkinDetails = `本月打卡: ${month || 'N/A'}; 连续打卡: ${ctu || 'N/A'}; 累计打卡: ${total || 'N/A'}; 累计奖励: ${totalPrice || 'N/A'}; 最近奖励: ${price || 'N/A'}`;
-        
-        // 确保 host.message 是字符串，并且附加用户信息和签到详情
-        let baseMessage = (typeof host.message === 'string' && (host.message.endsWith("!") || host.message.endsWith("。")) ? host.message : (host.message || "") + "。");
-        host.message = `${baseMessage} ${userInfo}${checkinDetails}`;
+        let initialMessage = host.message || ""; 
+        if (typeof initialMessage === 'string' && initialMessage.length > 0 && !initialMessage.match(/[。！？]$/)) {
+             initialMessage += '。';
+        }
 
+        let additionalInfoParts = [];
+        if (host.userName) {
+            additionalInfoParts.push(`用户名: ${host.userName}`);
+        }
+
+        let detailStrings = [];
+        // Use the text directly from the original selectors if they are not empty
+        // These texts might already contain labels like "本月打卡: 10" or just "10"
+        // The original script simply concatenated them.
+        if (rawMonth) detailStrings.push(rawMonth);
+        if (rawCtu) detailStrings.push(rawCtu);
+        if (rawTotal) detailStrings.push(rawTotal);
+        if (rawTotalPrice) detailStrings.push(rawTotalPrice);
+        if (rawPrice) detailStrings.push(rawPrice);
+
+        if (detailStrings.length > 0) {
+            additionalInfoParts.push(detailStrings.join('; '));
+        }
+
+        if (additionalInfoParts.length > 0) {
+            host.message = `${initialMessage} ${additionalInfoParts.join('; ')}`.trim();
+        } else {
+            host.message = initialMessage.trim(); 
+        }
         
+        host.message = host.message.replace(/\s*;\s*$/, "").trim(); 
+        if (host.message && !host.message.match(/[。！？]$/)) { 
+            host.message += '。';
+        }
+        if (!host.message) {
+            host.message = "签到信息获取不完整。"; 
+        }
+
+        // console.log(`[${host.name}] 获取签到信息成功: ${host.message}`); 
     } catch (error) {
         const errorMsg = `获取签到信息出错: ${error.message}`;
-        host.message += ` (${errorMsg})`; 
+        host.message = (host.message || "") + ` (${errorMsg})`; 
         console.error(`[${host.name}] ${errorMsg}`, error);
     }
 }
@@ -234,7 +265,7 @@ async function sendSCMsg(status, info) {
     const serverUrl = `https://sctapi.ftqq.com/${sckey}.send`;
     await axios.post(serverUrl, qs.stringify({
         "title": status,
-        "desp": info.replace(/\*\*/g, '*') // Server酱 Markdown 支持有限，**粗体** 转 *斜体*（或移除）
+        "desp": info.replace(/\*\*/g, '*') 
                    .replace(/\*/g, '-') 
     }));
     console.log("Server酱 推送请求已发送。");
@@ -245,7 +276,7 @@ async function sendPushPlusMsg(status, info) {
     await axios.post("http://www.pushplus.plus/send", {
         'token': token,
         'title': status,
-        'content': info, // PushPlus 支持 Markdown
+        'content': info, 
         'template': 'markdown' 
     });
     console.log("PushPlus 推送请求已发送。");
@@ -256,8 +287,8 @@ async function sendPushDeerMsg(status, info) {
     await axios.post("https://api2.pushdeer.com/message/push", {
         'pushkey': pushDeer,
         'type': 'markdown', 
-        'text': status, // title
-        'desp': info // body for markdown
+        'text': status, 
+        'desp': info 
     });
     console.log("PushDeer 推送请求已发送。");
 }
@@ -265,7 +296,6 @@ async function sendPushDeerMsg(status, info) {
 async function sendBarkMsg(status, info) {
     console.log("尝试通过 Bark 推送...");
     const title = encodeURIComponent(status);
-    // Bark 通常不支持 Markdown，发送纯文本，移除 Markdown 标记
     const plainInfo = info.replace(/\*\*/g, '').replace(/\*/g, '');
     const message = encodeURIComponent(plainInfo);
     const barkRealServer = barkServer ? barkServer : "https://api.day.app";
@@ -278,16 +308,12 @@ async function sendTelegramMsg(status, info) {
     console.log("尝试通过 Telegram 推送...");
     const escapeMarkdownV2 = (text) => {
         if (!text) return '';
-        // MarkdownV2 特殊字符: _ * [ ] ( ) ~ ` > # + - = | { } . !
         const escapeChars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
         return text.replace(new RegExp(`[\\${escapeChars.join('\\')}]`, 'g'), '\\$&');
     };
     
-    // 将 **text** 风格的粗体转换为 *text* (Telegram MarkdownV2 的粗体)
-    // 并将独立的 * (可能是列表项) 替换为 - (Telegram 的列表项)
-    // 注意：这个替换逻辑比较简单，复杂的 Markdown 可能需要更完善的转换器
     let formattedInfo = info ? info.replace(/\*\*(.*?)\*\*/g, '*$1*') : ''; 
-    formattedInfo = formattedInfo.replace(/(?<!\*)\*(?!\*)/g, '-'); // 将单个 * 替换为 - (避免破坏已转换的粗体)
+    formattedInfo = formattedInfo.replace(/(?<!\*)\*(?!\*)/g, '-'); 
     
     const text = `*${escapeMarkdownV2(status)}*\n\n${escapeMarkdownV2(formattedInfo)}`;
 
@@ -305,13 +331,12 @@ async function main() {
     let overallMessageDetails = [];
     let atLeastOneCheckinAttempted = false;
 
-    // 现在只处理 4ksj
     if (cookieSJ) {
         atLeastOneCheckinAttempted = true;
         let sj = new HostInfo("4K视界", SJUrl, SJHeaders);
         await getFormHashSJ(sj); 
         overallStatusSummary.push(`${sj.name}: ${sj.status ? '成功' : '失败'}`);
-        overallMessageDetails.push(`**${sj.name}**: ${sj.message}`); // 推送时使用 Markdown 粗体
+        overallMessageDetails.push(`**${sj.name}**: ${sj.message}`); 
     } else {
         console.log("[4K视界] 未配置 SJCOOKIE，跳过签到。");
         overallStatusSummary.push("4K视界: 未配置Cookie"); 
@@ -330,7 +355,6 @@ async function main() {
 
     console.log("\n--- 最终结果 ---");
     console.log(finalStatus);
-    // 控制台输出时移除 Markdown 标记，使其更易读
     console.log(finalMessage.replace(/\*\*/g, '').replace(/\*/g, '')); 
     console.log("------------------");
 
