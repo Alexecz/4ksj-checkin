@@ -1,6 +1,6 @@
 # 4ksj-checkin
 
-2024/11/15 修复4ksj cookie失效
+2025/05/22 优化错误重试，只在0点运行一次。
 
 #### 脚本功能：
 
@@ -39,6 +39,6 @@ https://chromewebstore.google.com/detail/header-cookie-qrcode-case/echlhpliefhch
    - TELEGRAM_TOKEN（填写Telegram bot的Token）
    - TELEGRAM_ID (填写通过访问 https://api.telegram.org/bot<TELEGRAM_TOKEN>/getUpdates 获取的chat id)
 
-4. 以上设置完毕后，每天0点和6点会自动触发，并会执行自动签到（**0点GitHub网络经常抽风**，故多增加一次执行,可自行改时间）。
+4. 以上设置完毕后**需要开启Acitons**，每天0点会自动触发，并会执行自动签到（可自行改时间）。
 
 

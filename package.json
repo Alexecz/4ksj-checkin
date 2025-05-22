@@ -21,6 +21,7 @@
   "homepage": "https://github.com/Alexecz/hao4k-checkin-nodejs#readme",
   "dependencies": {
     "axios": "^0.26.0",
+    "axios-retry": "^4.5.0",
     "cheerio": "^1.0.0-rc.10",
     "iconv-lite": "^0.6.3",
     "qs": "^6.10.3",

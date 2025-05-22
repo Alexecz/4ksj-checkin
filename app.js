@@ -1,11 +1,34 @@
 import axios from "axios";
 import qs from "qs";
-import xmlJs from "xml-js";
 import iconv from "iconv-lite";
 import * as cheerio from 'cheerio';
+import axiosRetry from 'axios-retry'; // 新增：导入 axios-retry
 
-axios.defaults.retry = 3; //设置全局请求次数
-axios.defaults.retryDelay = 1000;//设置全局请求间隙
+// 新增：配置 axios-retry
+axiosRetry(axios, {
+  retries: 3, // 设置重试次数 (不包括首次请求)
+  retryDelay: (retryCount, error) => {
+    console.log(`请求 ${error.config?.url || ''} 失败 (状态码: ${error.response?.status || 'N/A'})，正在进行第 ${retryCount} 次重试。错误信息: ${error.message}`);
+    return retryCount * 2000; // 每次重试的延迟时间，例如：2s, 4s, 6s
+  },
+  retryCondition: (error) => {
+    // 配置重试的条件
+    const isNetworkError = !error.response && (error.code && ['ECONNRESET', 'ENOTFOUND', 'ESOCKETTIMEDOUT', 'ETIMEDOUT', 'ECONNREFUSED', 'EHOSTUNREACH', 'EPIPE', 'EAI_AGAIN'].includes(error.code));
+    const isServerError = error.response && error.response.status >= 500;
+    
+    if (error.response && error.response.status >= 400 && error.response.status < 500) {
+        console.log(`客户端错误 (状态码: ${error.response.status})，请求 ${error.config?.url || ''} 不进行重试。`);
+        return false;
+    }
+
+    if (isNetworkError || isServerError) {
+        console.log(`检测到网络错误或服务器错误，将对请求 ${error.config?.url || ''} 进行重试。`);
+        return true;
+    }
+    
+    return false;
+  }
+});
 
 // 填写Telegram的Bot API和Chat ID
 const telegramToken = process.env.TELEGRAM_TOKEN
@@ -26,19 +49,12 @@ const barkKey = process.env["BARKKEY"]
 // 填写Bark的服务器地址, 不开启不用填
 const barkServer = process.env["BARKSERVER"]
 
-//配置需要打开的服务信息,hao4k 和 4ksj，未配置只对hao4k
-// const needCheckHost = process.env["CHECKHOST"]
-const needCheckHost = '4ksj'
-
-// 填入Hao4k账号对应cookie
-let cookie = process.env["COOKIE"];
-
-
 // 填入4KSJ账号对应Cookie
 let cookieSJ = process.env["SJCOOKIE"];
 
 // 更新 cookie 中 will_timelogout_XXXXXX 的值为当前时间戳加一天
 function updateCookieLogoutTimePlusOneDay(cookieStr) {
+    if (!cookieStr) return cookieStr; 
     const oneDayInSeconds = 24 * 60 * 60;
     const timestampPlusOneDay = Math.floor(Date.now() / 1000) + oneDayInSeconds;
     return cookieStr.replace(/(will_timelogout_\d+=)\d+/, `$1${timestampPlusOneDay}`);
@@ -46,27 +62,13 @@ function updateCookieLogoutTimePlusOneDay(cookieStr) {
 
 cookieSJ = updateCookieLogoutTimePlusOneDay(cookieSJ);
 
-
-
-const SJUrl =
-    "https://www.4ksj.com/";
-const hao4kUrl =
-    "https://www.hao4k.cn/qiandao/";
-
-const userAgent =
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.0.0 Safari/537.36";
+const SJUrl = "https://www.4ksj.com/";
 
 const SJUserAgent =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36 Edg/129.0.0.0";
 
-const headers = {
-    cookie: cookie ?? "",
-    "User-Agent": userAgent,
-    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9"
-};
-
 const SJHeaders = {
-    cookie: cookieSJ ?? cookie,
+    cookie: cookieSJ ?? "", 
     "User-Agent": SJUserAgent,
     "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9"
 };
@@ -75,326 +77,309 @@ class HostInfo {
     name;
     url;
     header;
-    status;
+    status; 
     formHash;
-    message;
+    message; 
+    userName; // 新增：用于存储用户名
 
     constructor(name, url, header) {
         this.name = name;
         this.url = url;
         this.header = header;
+        this.status = false; 
+        this.message = "操作未开始";
+        this.userName = ""; // 初始化用户名
     }
 }
 
 async function getFormHashSJ(host) {
-    let headers = host.header;
-    await axios
-        .get(host.url + 'qiandao.php', {
-            headers,
+    console.log(`[${host.name}] 开始获取 formhash...`);
+    try {
+        const response = await axios.get(host.url + 'qiandao.php', {
+            headers: host.header,
             responseType: "arraybuffer",
-        })
-        .then(async (response) => {
-            const gb = iconv.decode(response.data, "utf-8");
-            const $ = cheerio.load(gb);
-            let formHash = '';
-            const userName = $('.nexmemberintels>h5').text().replace('\n', '');
-            
-            if (userName === '') {
-                console.log("cookie失效！");
-                host.status = false;
-                host.message = "cookie失效！";
-            } else {
-                console.log(host.name, "获取用户信息成功！");
-                formHash = $('#scbar_form input:nth-child(2)').val();
-                host.status = true;
-                host.formHash = formHash;
-                await checkinSJ(host);
-            }
-        })
-        .catch((error) => {
-            host.status = false;
-            host.message = "获取formhash出错" + error;
-            console.log(host.name, error);
         });
-}
+        const gb = iconv.decode(response.data, "utf-8"); 
+        const $ = cheerio.load(gb);
+        const userNameText = $('.nexmemberintels>h5').text().replace(/\s+/g, ' ').trim(); 
 
-async function getFormHash(host) {
-    let headers = host.header;
-    await axios
-        .get(host.url, {
-            headers,
-            responseType: "arraybuffer",
-        })
-        .then(async (response) => {
-            const gb = iconv.decode(response.data, "gb2312");
-            const $ = cheerio.load(gb);
-            let formHash = '';
-            const userName = $('#mumucms_username').text();
-            if (userName === '') {
-                console.log("cookie失效！");
-                host.status = false;
-                host.message = "cookie失效！";
-            } else {
-                console.log(host.name, "获取用户信息成功！");
-                formHash = $('#scbar_form input').eq(1).val();
-                host.status = true;
-                host.formHash = formHash;
-                await checkin(host);
-            }
-        })
-        .catch((error) => {
+        if (!userNameText) { 
+            console.error(`[${host.name}] 获取用户信息失败，可能是 cookie 失效。`);
             host.status = false;
-            host.message = "获取formhash出错" + error;
-            console.log(host.name, error);
-        });
+            host.message = "获取用户信息失败，Cookie可能已失效！";
+            return; 
+        }
+        
+        host.userName = userNameText; // 存储用户名
+        if (host.userName && typeof process.env.GITHUB_ACTIONS !== 'undefined') { // 仅在 GitHub Actions 环境中输出 add-mask
+            console.log(`::add-mask::${host.userName}`); // 指示 GitHub Actions 屏蔽此用户名
+        }
+        // console.log(`[${host.name}] 获取用户信息成功！用户名: ${host.userName}`); // 已移除控制台打印用户名
+        
+        const formHash = $('#scbar_form input[name="formhash"]').val() || $('#scbar_form input:nth-child(2)').val(); 
+        
+        if (!formHash) {
+            console.error(`[${host.name}] 未能获取到 formhash。`);
+            host.status = false;
+            host.message = "未能获取到 formhash。";
+            return;
+        }
+
+        host.formHash = formHash;
+        // console.log(`[${host.name}] 获取 formhash 成功: ${formHash}`);
+        await checkinSJ(host);
+
+    } catch (error) {
+        host.status = false;
+        host.message = `[${host.name}] 获取 formhash 出错: ${error.message}`;
+        console.error(`[${host.name}] 获取 formhash 过程中发生错误:`, error);
+    }
 }
 
 async function checkinSJ(host) {
-    const checkInUrl =
-        host.url + "qiandao.php?sign=" + host.formHash;
-    let headers = host.header;
-    await axios
-        .get(checkInUrl, {
-            headers,
+    const checkInUrl = host.url + "qiandao.php?sign=" + host.formHash; 
+    // console.log(`[${host.name}] 开始签到，URL: ${checkInUrl}`); 
+    try {
+        const response = await axios.get(checkInUrl, {
+            headers: host.header,
             responseType: "arraybuffer",
-        })
-        .then(async (response) => {
-            const GBK = iconv.decode(response.data, "GBK");
-            const $ = cheerio.load(GBK);
-            const msg = $('#messagetext>p').text()
-
-            host.message = msg;
-            host.status = true;
-            await getCheckinInfoSJ(host);
-        })
-        .catch((error) => {
-            console.log(host.name, "签到出错或超时" + error);
-            host.status = false;
-            host.message = "签到出错或超时" + error;
         });
-}
+        const responseText = iconv.decode(response.data, "GBK"); 
+        const $ = cheerio.load(responseText);
+        const msg = $('#messagetext>p').text().trim(); 
 
-async function checkin(host) {
-    const checkInUrl =
-        host.url + "?mod=sign&operation=qiandao&formhash=" + host.formHash + "&format=empty&inajax=1&ajaxtarget=";
-    let headers = host.header;
-    await axios
-        .get(checkInUrl, {
-            headers,
-            responseType: "arraybuffer",
-        })
-        .then(async (response) => {
-            const resUtf8 = iconv.decode(response.data, "GBK");
-            const dataStr = xmlJs.xml2json(resUtf8, {
-                compact: true,
-                spaces: 4,
-            });
-            const data = JSON.parse(dataStr);
-            const content = data?.root?._cdata;
-
-            if (content) {
-                if (content === "今日已签") {
-                    host.message = "今日已签！";
-                }
-            } else {
-                host.message = "签到成功!";
+        if (msg) {
+            host.message = msg; // 初始消息为签到结果
+            console.log(`[${host.name}] 签到操作返回信息: ${msg}`);
+            if (msg.includes("签到成功") || msg.includes("已签过到") || msg.includes("已签到")) { 
+                 host.status = true; 
             }
-            host.status = true;
-            await getCheckinInfo(host);
-        })
-        .catch((error) => {
-            console.log(host.name, "签到出错或超时" + error);
-            host.status = false;
-            host.message = "签到出错或超时" + error;
-        });
+        } else {
+            console.warn(`[${host.name}] 未获取到明确的签到结果信息，请检查页面结构。`);
+            host.message = "未获取到明确的签到结果信息。";
+        }
+        await getCheckinInfoSJ(host); // 获取并附加详细签到信息（包括用户名）
+
+    } catch (error) {
+        console.error(`[${host.name}] 签到出错或超时:`, error);
+        host.status = false;
+        host.message = `签到出错或超时: ${error.message}`;
+    }
 }
 
 async function getCheckinInfoSJ(host) {
-    let headers = host.header;
-    await axios
-        .get(host.url + 'qiandao.php', {
-            headers,
+    console.log(`[${host.name}] 开始获取签到详细信息...`);
+    try {
+        const response = await axios.get(host.url + 'qiandao.php', { 
+            headers: host.header,
             responseType: "arraybuffer",
-        })
-        .then((response) => {
-            const gb = iconv.decode(response.data, "GBK");
-            const $ = cheerio.load(gb);
-            //本月打卡
-            let month = $('#wp > .ct2 > .sd div:nth-child(2) .xl1 li:nth-child(2):eq(0)').text(); 
-            //连续打卡
-            let ctu = $('#wp > .ct2 > .sd div:nth-child(2) .xl1 li:nth-child(3):eq(0)').text();
-            //累计打卡
-            let total = $('#wp > .ct2 > .sd div:nth-child(2) .xl1 li:nth-child(4):eq(0)').text();
-            //累计奖励
-            let totalPrice = $('#wp > .ct2 > .sd div:nth-child(2) .xl1 li:nth-child(5):eq(0)').text();
-            //最近奖励
-            let price = $('#wp > .ct2 > .sd div:nth-child(2) .xl1 li:nth-child(6):eq(0)').text();
-          
-            let info = month +'; '+ ctu +'; '+ total +'; '+ totalPrice +'; '+ price;
-            host.message = host.message + info;
-            // console.log(host.name, info)
-        })
-        .catch((error) => {
-            host.message = "获取签到信息出错！" + error;
-            console.log(host.name, "获取签到信息出错！" + error);
         });
-}
+        const gb = iconv.decode(response.data, "GBK"); 
+        const $ = cheerio.load(gb);
+        
+        const rawMonth = $('#wp > .ct2 > .sd div:nth-child(2) .xl1 li:nth-child(2):eq(0)').text().trim();
+        const rawCtu = $('#wp > .ct2 > .sd div:nth-child(2) .xl1 li:nth-child(3):eq(0)').text().trim();
+        const rawTotal = $('#wp > .ct2 > .sd div:nth-child(2) .xl1 li:nth-child(4):eq(0)').text().trim();
+        const rawTotalPrice = $('#wp > .ct2 > .sd div:nth-child(2) .xl1 li:nth-child(5):eq(0)').text().trim();
+        const rawPrice = $('#wp > .ct2 > .sd div:nth-child(2) .xl1 li:nth-child(6):eq(0)').text().trim();
+      
+        let initialMessage = host.message || ""; 
+        if (typeof initialMessage === 'string' && initialMessage.length > 0 && !initialMessage.match(/[。！？]$/)) {
+             initialMessage += '。';
+        }
 
-async function getCheckinInfo(host) {
-    let headers = host.header;
-    await axios
-        .get(host.url, {
-            headers,
-            responseType: "arraybuffer",
-        })
-        .then((response) => {
-            const gb = iconv.decode(response.data, "gb2312");
-            const $ = cheerio.load(gb);
-            let days = $('#lxdays').val(); //连续签到天数
-            let reward = $('#lxreward').val(); // 签到奖励
-            let allDays = $('#lxtdays').val(); // 签到总天数
-            let rank = $('#qiandaobtnnum').val();// 签到排名
-            let info = " 本次签到奖励： " + reward + " 个币； 已连续签到： " + days + " 天; 今日排名： " + rank + " 位； 签到总天数： " + allDays + " 天；";
-            host.message = host.message + info;
-            console.log(host.name, info)
-        })
-        .catch((error) => {
-            host.message = "获取签到信息出错！" + error;
-            console.log(host.name, "获取签到信息出错！" + error);
-        });
+        let additionalInfoParts = [];
+        if (host.userName) {
+            additionalInfoParts.push(`用户名: ${host.userName}`);
+        }
+
+        let detailStrings = [];
+        if (rawMonth) detailStrings.push(rawMonth);
+        if (rawCtu) detailStrings.push(rawCtu);
+        if (rawTotal) detailStrings.push(rawTotal);
+        if (rawTotalPrice) detailStrings.push(rawTotalPrice);
+        if (rawPrice) detailStrings.push(rawPrice);
+
+        if (detailStrings.length > 0) {
+            additionalInfoParts.push(detailStrings.join('; '));
+        }
+
+        if (additionalInfoParts.length > 0) {
+            host.message = `${initialMessage} ${additionalInfoParts.join('; ')}`.trim();
+        } else {
+            host.message = initialMessage.trim(); 
+        }
+        
+        host.message = host.message.replace(/\s*;\s*$/, "").trim(); 
+        if (host.message && !host.message.match(/[。！？]$/)) { 
+            host.message += '。';
+        }
+        if (!host.message) {
+            host.message = "签到信息获取不完整。"; 
+        }
+
+        // console.log(`[${host.name}] 获取签到信息成功: ${host.message}`); 
+    } catch (error) {
+        const errorMsg = `获取签到信息出错: ${error.message}`;
+        host.message = (host.message || "") + ` (${errorMsg})`; 
+        console.error(`[${host.name}] ${errorMsg}`, error);
+    }
 }
 
 function pushNotice(status, message) {
-    console.log("开始推送消息")
+    console.log("\n开始推送通知...");
+    const notifications = [];
     if (sckey) {
-        console.log("通过server酱推送消息");
-        sendSCMsg(status, message);
+        notifications.push(sendSCMsg(status, message).catch(e => console.error("Server酱推送失败:", e.message)));
     }
     if (token) {
-        console.log("通过pushPlus推送消息");
-        sendPushPlusMsg(status, message);
+        notifications.push(sendPushPlusMsg(status, message).catch(e => console.error("PushPlus推送失败:", e.message)));
     }
     if (pushDeer) {
-        console.log("通过pushDeer推送消息");
-        sendPushDeerMsg(status, message);
+        notifications.push(sendPushDeerMsg(status, message).catch(e => console.error("PushDeer推送失败:", e.message)));
     }
     if (barkKey) {
-        console.log("通过bark推送消息");
-        sendBarkMsg(status, message);
+        notifications.push(sendBarkMsg(status, message).catch(e => console.error("Bark推送失败:", e.message)));
+    }
+    if (telegramToken && telegramID) {
+        notifications.push(sendTelegramMsg(status, message).catch(e => console.error("Telegram推送失败:", e.message)));
+    }
+
+    if (notifications.length === 0) {
+        console.log("未配置任何通知服务。");
+        return;
+    }
+
+    Promise.allSettled(notifications).then(results => {
+        results.forEach(result => {
+            if (result.status === 'rejected') {
+                // 错误已在各自的 catch 中打印
+            }
+        });
+        console.log("所有通知推送尝试完毕。\n");
+    });
+}
+
+async function sendSCMsg(status, info) {
+    console.log("尝试通过 Server酱 推送...");
+    const serverUrl = `https://sctapi.ftqq.com/${sckey}.send`;
+    await axios.post(serverUrl, qs.stringify({
+        "title": status,
+        "desp": info.replace(/\*\*/g, '*') 
+                   .replace(/\*/g, '-') 
+    }));
+    console.log("Server酱 推送请求已发送。");
+}
+
+async function sendPushPlusMsg(status, info) {
+    console.log("尝试通过 PushPlus 推送...");
+    await axios.post("http://www.pushplus.plus/send", {
+        'token': token,
+        'title': status,
+        'content': info, 
+        'template': 'markdown' 
+    });
+    console.log("PushPlus 推送请求已发送。");
+}
+
+async function sendPushDeerMsg(status, info) {
+    console.log("尝试通过 PushDeer 推送...");
+    await axios.post("https://api2.pushdeer.com/message/push", {
+        'pushkey': pushDeer,
+        'type': 'markdown', 
+        'text': status, 
+        'desp': info 
+    });
+    console.log("PushDeer 推送请求已发送。");
+}
+
+async function sendBarkMsg(status, info) {
+    console.log("尝试通过 Bark 推送...");
+    const title = encodeURIComponent(status);
+    const plainInfo = info.replace(/\*\*/g, '').replace(/\*/g, '');
+    const message = encodeURIComponent(plainInfo);
+    const barkRealServer = barkServer ? barkServer : "https://api.day.app";
+    const barkUrl = `${barkRealServer}/${barkKey}/${title}/${message}?group=Checkin`; 
+    await axios.get(barkUrl);
+    console.log("Bark 推送请求已发送。");
+}
+
+async function sendTelegramMsg(status, info) {
+    console.log("尝试通过 Telegram 推送...");
+    const escapeMarkdownV2 = (text) => {
+        if (!text) return '';
+        const escapeChars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
+        return text.replace(new RegExp(`[\\${escapeChars.join('\\')}]`, 'g'), '\\$&');
+    };
+    
+    let formattedInfo = info ? info.replace(/\*\*(.*?)\*\*/g, '*$1*') : ''; 
+    formattedInfo = formattedInfo.replace(/(?<!\*)\*(?!\*)/g, '-'); 
+    
+    const text = `*${escapeMarkdownV2(status)}*\n\n${escapeMarkdownV2(formattedInfo)}`;
+
+    await axios.post(`https://api.telegram.org/bot${telegramToken}/sendMessage`, {
+        'chat_id': telegramID,
+        'text': text,
+        'parse_mode': 'MarkdownV2'
+    });
+    console.log("Telegram 推送请求已发送。");
+}
+
+async function main() {
+    console.log("脚本开始运行:", new Date().toLocaleString());
+    let overallStatusSummary = [];
+    let overallMessageDetails = []; // For push notifications, includes username
+    // let consoleMessageDetails = []; // We will construct the console message directly
+
+    let atLeastOneCheckinAttempted = false;
+    let sjHostInfo = null; 
+
+    if (cookieSJ) {
+        atLeastOneCheckinAttempted = true;
+        sjHostInfo = new HostInfo("4K视界", SJUrl, SJHeaders);
+        await getFormHashSJ(sjHostInfo); 
+        overallStatusSummary.push(`${sjHostInfo.name}: ${sjHostInfo.status ? '成功' : '失败'}`);
+        overallMessageDetails.push(`**${sjHostInfo.name}**: ${sjHostInfo.message}`); 
+
+    } else {
+        console.log("[4K视界] 未配置 SJCOOKIE，跳过签到。");
+        const noCookieMsg = "4K视界: 未配置Cookie";
+        const noCookieDetail = "**4K视界**: 未配置Cookie，跳过。";
+        overallStatusSummary.push(noCookieMsg); 
+        overallMessageDetails.push(noCookieDetail);
+        // consoleMessageDetails.push(noCookieMsg); 
+        
+        if (!atLeastOneCheckinAttempted) { 
+             const noServiceMsg = "4K视界 Cookie (SJCOOKIE) 未配置，无法执行签到。";
+             console.log(noServiceMsg);
+             pushNotice("签到任务未执行", noServiceMsg);
+             return;
+        }
     }
     
-    if (telegramToken) {
-        console.log("通过Telegram推送消息");
-        sendTelegramMsg(status, message);
-    }
-    console.log("结束推送消息")
+    const finalStatus = "签到结果: " + overallStatusSummary.join('; ');
+    const finalMessageForPush = overallMessageDetails.join('\n\n'); 
+    
+    // Prepare the final message for console output
+    // It will be based on overallMessageDetails but without the username if ::add-mask:: is used.
+    // If ::add-mask:: is effective, the username in sjHostInfo.message (and thus in finalMessageForPush)
+    // will be masked as '***' in the GitHub Actions log.
+    // We still remove Markdown for console readability.
+    let finalMessageForConsoleOutput = finalMessageForPush;
+
+
+    console.log("\n--- 最终结果 ---");
+    console.log(finalStatus);
+    // The ::add-mask:: command should handle masking the username if it appears here.
+    // We just clean up markdown for console readability.
+    console.log(finalMessageForConsoleOutput.replace(/\*\*/g, '').replace(/\*/g, '')); 
+    console.log("------------------");
+
+    pushNotice(finalStatus, finalMessageForPush); 
+    console.log("脚本运行结束:", new Date().toLocaleString());
 }
 
-function sendSCMsg(status, info) {
-    let serverUrl = "https://sctapi.ftqq.com/" + sckey + ".send";
-    axios.post(serverUrl, qs.stringify({
-        "title": status,
-        "desp": info
-    }))
-        .catch((e) => {
-            console.log(e);
-        })
-}
-
-function sendPushPlusMsg(status, info) {
-    axios
-        .post("http://www.pushplus.plus/send", {
-            'token': token,
-            'title': status,
-            'content': info
-        })
-        .catch((e) => {
-            console.log(e);
-        });
-}
-
-function sendPushDeerMsg(status, info) {
-    let message = status + info;
-    axios
-        .post("https://api2.pushdeer.com/message/push", {
-            'pushkey': pushDeer,
-            'type': 'text',
-            'text': message
-        })
-        .catch((e) => {
-            console.log(e);
-        });
-}
-
-function sendBarkMsg(status, info) {
-    let title = encodeURI(status);
-    let message = encodeURI(info);
-    let barkRealServer = barkServer ? barkServer : "https://api.day.app";
-    let barkUrl = barkRealServer + "/" + barkKey + "/" + title + "/" + message;
-    axios
-        .get(barkUrl)
-        .catch((e) => {
-            console.log(e);
-        })
-}
-
-/**
- * 通过 Telegram 发送消息
- * @param {*} status 签到结果
- * @param {*} info 签到返回信息
- */
-function sendTelegramMsg(status, info) {
-    axios
-        .post("https://api.telegram.org/bot" + telegramToken + "/sendMessage", {
-            'chat_id': telegramID,
-            'text': '<b>' + status + '</b>\n' + info,
-            'parse_mode': 'HTML'
-        })
-        .catch((e)=>{
-            console.log(e);
-        })
-}
-
-async function start() {
-    let status = "未配置";
-    let message = "未配置";
-    let checkIn = false;
-    console.log("配置的打卡的服务", needCheckHost);
-    const needCheck = needCheckHost ? needCheckHost : "hao4k";
-    if (needCheck.indexOf("4ksj") !== -1) {
-        if (!checkIn) {
-            checkIn = true;
-            status = "";
-            message = "";
-        }
-        let sj = new HostInfo("4K视界", SJUrl, SJHeaders);
-        await getFormHashSJ(sj);
-        status += sj.name + ": ";
-        if (sj.status) {
-            status += "签到成功！";
-        } else {
-            status += "签到失败！";
-        }
-        message += "* " + sj.name + ": " + sj.message;
-    }
-    if (needCheck.indexOf("hao4k") !== -1) {
-        if (!checkIn) {
-            checkIn = true;
-            status = "";
-            message = "";
-        }
-        let hao4k = new HostInfo("hao4K", hao4kUrl, headers);
-        await getFormHash(hao4k);
-        status += hao4k.name + ": ";
-        if (hao4k.status) {
-            status += "签到成功！";
-        } else {
-            status += "签到失败！";
-        }
-        message += "* " + hao4k.name + ": " + hao4k.message;
-    }
-    console.log(status, message);
-    pushNotice(status, message);
-}
-
-await start()
+main().catch(error => {
+    console.error("脚本主函数发生未捕获错误:", error);
+    pushNotice("签到脚本发生严重错误", `错误信息: ${error.message}\n请检查日志。`);
+});
