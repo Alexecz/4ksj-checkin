@@ -3,7 +3,6 @@ name: 4ksj-checkin
 on:
   # workflow_dispatch 事件允许您手动触发工作流程
   workflow_dispatch: 
-    # 可以进行配置手动触发后有选项进行触发
   push:
     branches: [ main ]
   pull_request:
@@ -13,39 +12,32 @@ on:
     # 设置 UTC 时间每天 16:00 自动触发即中国 0:00，github有误差大概在 0:10 左右触发;有需要可以自行更改此文件调整时间
     # POSIX cron 语法，只有五个域：分 时 日 月 周
     # https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html#tag_20_25_07
-    - cron:  0 16,22 * * *  
+    - cron:  '0 16 * * *'  # 修改此处：仅在 UTC 16:00 (北京时间 00:00) 执行
 
 jobs:
   checkin:
     runs-on: ubuntu-latest
     
     steps:
-    # check-out 仓库中最新的代码到 Workflow 的工作区
     - uses: actions/checkout@v3
 
     - name: 安装node
       uses: actions/setup-node@v3
       with:
-        node-version: '20'
+        node-version: '20' 
+        cache: 'npm'
  
     - name: 安装依赖包
-      run: npm install
+      run: npm ci 
 
     - name: 运行
       run: node app.js
-      # 设置环境变量，不同语言获取环境变量方式不同
       env: 
         SCKEY: ${{ secrets.SCKEY }}
-        COOKIE: ${{ secrets.COOKIE }}
         SJCOOKIE: ${{ secrets.SJCOOKIE }}
         PPTOKEN : ${{ secrets.PPTOKEN }}
         PDKEY : ${{ secrets.PDKEY  }}
         BARKKEY : ${{ secrets.BARKKEY  }}
         BARKSERVER : ${{ secrets.BARKSERVER  }}
-        CHECKHOST : ${{ secrets.CHECKHOST  }}
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         TELEGRAM_ID: ${{ secrets.TELEGRAM_ID }}
-
-
-
-
