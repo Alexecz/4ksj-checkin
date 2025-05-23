@@ -151,7 +151,7 @@ async function checkinSJ(host) {
         if (msg) {
             host.message = msg; // 初始消息为签到结果
             console.log(`[${host.name}] 签到操作返回信息: ${msg}`);
-            if (msg.includes("签到成功") || msg.includes("已签过到") || msg.includes("已签到")) { 
+            if (msg.includes("签到成功") || msg.includes("已签过到") || msg.includes("已签到") || msg.includes("打卡成功")) { 
                  host.status = true; 
             }
         } else {
